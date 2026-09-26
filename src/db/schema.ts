@@ -78,6 +78,8 @@ export const userSession = pgTable(
       .references(() => appUser.id, { onDelete: 'cascade' }),
     /** 只存 refresh token 的哈希（含 pepper），泄库也无法重放 */
     tokenHash: text('token_hash').notNull(),
+    /** 上一枚刷新令牌的哈希：用于检测"旧令牌被重放"（复用即视为泄露，吊销全部会话） */
+    previousTokenHash: text('previous_token_hash'),
     deviceName: text('device_name').notNull().default(''),
     userAgent: text('user_agent').notNull().default(''),
     ip: text('ip').notNull().default(''),

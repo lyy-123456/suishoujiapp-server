@@ -1,0 +1,1 @@
+ALTER TABLE "user_session" ADD COLUMN "previous_token_hash" text;

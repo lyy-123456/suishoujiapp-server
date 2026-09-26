@@ -11,6 +11,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio"
@@ -29,10 +31,15 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@nestjs/testing": "^11.2.6",
+    "@swc/core": "^1.16.2",
     "@types/node": "^24.19.0",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.11",
+    "pg-mem": "^3.0.14",
     "tsx": "^4.23.15",
-    "typescript": "~5.9"
+    "typescript": "~5.9",
+    "unplugin-swc": "^1.6.0",
+    "vitest": "^3.2.7"
   }
 }

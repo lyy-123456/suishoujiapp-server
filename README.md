@@ -80,6 +80,19 @@ CI 会校验"schema 改了但迁移没提交"的情况。
 **同步设计要点**：所有业务表都有 `seq`（取自全局序列 `change_seq`）、`version`、`deleted_at`，
 客户端用 `since=<seq>` 一个游标即可拉取全部实体的增量，删除用墓碑防止"旧端把数据复活"。
 
+## 测试
+
+```bash
+npm test        # 端到端，跑在 pg-mem（内存版 Postgres）上，不需要 Docker/数据库
+```
+
+测试直接应用**真实的迁移 SQL** 并用真实的 drizzle 查询跑通 HTTP 层（Fastify `inject`），
+覆盖：邀请码注册、弱密码、重复邮箱、登录失败锁定、令牌校验、刷新令牌轮换与复用检测、
+改密后旧令牌失效、会话列表、登出、审计落库。
+
+> `test/pg-mem.ts` 里有两处必要的补丁（剥掉 drizzle 传的 `types`/`rowMode` 并按列序把对象行转数组），
+> 原因写在注释里 —— 没有它们 drizzle 在 pg-mem 上完全跑不起来。
+
 ---
 
 ## 部署（单机 2C2G）
@@ -103,7 +116,22 @@ docker compose exec api node dist/db/migrate.js
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | T2.1 | 仓库脚手架（环境校验、Drizzle schema、健康检查、Docker/Compose、CI） | ✅ 已完成 |
-| T2.2 | 认证模块（注册/登录/刷新轮换/登出/改密/会话管理、Argon2id、失败锁定） | ⬜ 进行中 |
-| T2.3+ | 用户与设置、文件直传、备份导入导出、地理代理、审计与限流、同步接口、管理端 | ⬜ 待做 |
+| T2.2 | 认证模块（注册/登录/刷新轮换+复用检测/登出/改密/会话管理、Argon2id、失败锁定、审计） | ✅ 已完成（17 项端到端测试通过） |
+| T2.3 | 用户与设置（`GET /auth/me` 已随 T2.2 完成；设置读写待做） | 🔄 进行中 |
+| T2.4+ | 文件直传、备份导入导出、地理代理、限流、同步接口、管理端 | ⬜ 待做 |
+
+### 已实现接口
+
+```
+POST   /api/v1/auth/register     注册（默认需邀请码）
+POST   /api/v1/auth/login        登录（失败 5 次锁 15 分钟）
+POST   /api/v1/auth/refresh      刷新令牌（单次使用 + 轮换 + 复用即吊销全部会话）
+POST   /api/v1/auth/logout       登出（可 allDevices 退全部）
+POST   /api/v1/auth/password     改密（旧令牌立刻失效，并给当前设备换发新令牌）
+GET    /api/v1/auth/me           当前用户
+GET    /api/v1/auth/sessions     已登录设备
+DELETE /api/v1/auth/sessions/:id 踢掉某台设备
+GET    /healthz  /readyz         存活 / 就绪探针
+```
 
 设计与验收标准见前端仓库的 `docs/backend-technical-plan.md` 与 `docs/modification-plan.md`。

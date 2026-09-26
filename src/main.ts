@@ -5,6 +5,8 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { ResponseInterceptor } from './common/response.interceptor';
 import { corsOrigins, env, isProduction } from './config/env';
 import { closeDb } from './db/client';
 
@@ -25,6 +27,10 @@ async function bootstrap(): Promise<void> {
 
   // 健康检查不带前缀，业务接口统一 /api/v1
   app.setGlobalPrefix('api/v1', { exclude: ['healthz', 'readyz'] });
+
+  // 统一响应封装 { code, message, data, requestId } 与统一异常出口
+  app.useGlobalInterceptors(new ResponseInterceptor());
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   const origins = corsOrigins();
   if (origins.length > 0) {

@@ -23,6 +23,9 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      - name: Test（端到端，跑在 pg-mem 上，无需数据库）
+        run: npm test
+
       - name: Build
         run: npm run build
 
