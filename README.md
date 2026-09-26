@@ -102,19 +102,34 @@ CI 有两个 job：`verify`（pg-mem，秒级）+ `verify-real-postgres`（Postg
 
 ---
 
-## 部署（单机 2C2G）
+## 部署（单机 2C2G · api.landery.cn）
+
+**完整步骤见 [`deploy/README.md`](deploy/README.md)**（含 DNS、服务器初始化、密钥生成、启动、验证、回滚、备份恢复、排障、安全核对清单）。
+
+速览：
 
 ```bash
-cd deploy
-cp .env.example .env      # 填 API_DOMAIN / POSTGRES_PASSWORD / JWT_SECRET / REFRESH_TOKEN_PEPPER
-docker compose up -d
-docker compose exec api node dist/db/migrate.js
+# 1) 服务器初始化（装 Docker、配 swap、开防火墙、启 fail2ban）
+bash deploy/init-server.sh
+
+# 2) 放好文件并填 .env（密钥用 openssl rand -base64 48 生成）
+scp deploy/* root@<IP>:/opt/suishouji/ && ssh root@<IP>
+
+# 3) 登录 GHCR（私有镜像）后启动
+docker login ghcr.io -u lyy-123456
+cd /opt/suishouji && docker compose up -d
+docker compose run --rm api node dist/db/migrate.js
+
+# 4) 验证
+curl -s https://api.landery.cn/healthz
 ```
 
-- 只有 Caddy 暴露 80/443；PostgreSQL 仅在 `internal` 网络（无外网出口），公网不可达
-- 每个服务都设了 `mem_limit`，PostgreSQL 参数按 2C2G 调优（见 `deploy/docker-compose.yml`）
-- `backup` 容器每日 `pg_dump` 并保留 30 天，支持接 restic 做加密异地备份
-- **境内服务器必须先完成域名备案**，否则 80/443 会被云厂商拦截
+- **镜像由 CI 构建**（`.github/workflows/release.yml` → `ghcr.io/lyy-123456/suishoujiapp-server`），
+  服务器只 `pull`；2C2G 上构建会 OOM，所以绝不在服务器上 build
+- 日常更新：服务器上 `cd /opt/suishouji && ./update.sh`（拉镜像 → 迁移 → 重启 → 健康检查）
+- 只有 Caddy 暴露 80/443；PostgreSQL 在无外网出口的内部网络，公网不可达
+- 每个服务都有 `mem_limit`，PG 参数按 2C2G 调优
+- `backup` 容器每日 `pg_dump` 保留 30 天，支持接 restic 加密异地备份
 
 ---
 

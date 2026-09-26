@@ -1,6 +1,9 @@
 # ---- 构建阶段 ----
-FROM node:22-alpine AS build
+FROM node:22-slim AS build
 WORKDIR /app
+
+# 由 CI 传入（package.json 的版本号），用于 /healthz 显示
+ARG APP_VERSION=dev
 
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -11,11 +14,17 @@ COPY drizzle ./drizzle
 RUN npm run build
 
 # ---- 运行阶段 ----
-FROM node:22-alpine AS runtime
+# 用 Debian slim 而不是 alpine：原生模块（@node-rs/argon2）的预编译二进制在 glibc 上覆盖最全，
+# musl 下曾有找不到二进制的坑，启动即崩 —— 镜像大 80MB 换"一次跑通"划算
+FROM node:22-slim AS runtime
+
 ENV NODE_ENV=production
 WORKDIR /app
 
-RUN addgroup -S app && adduser -S app -G app
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
+RUN groupadd --system --gid 1001 app && useradd --system --uid 1001 --gid app app
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force

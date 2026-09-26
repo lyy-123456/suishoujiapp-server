@@ -72,3 +72,74 @@ jobs:
 
       - name: Test against real PostgreSQL
         run: npm test
+
+  # 验证"真正要部署的那个镜像"：运行时依赖（native 模块）、镜像内迁移、健康检查、注册接口
+  # 这一步能挡住"本地测试全过、镜像一上服务器就崩"的情况
+  docker-image-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t suishouji-server:ci --build-arg APP_VERSION=ci .
+
+      - name: Run migrations from inside the image
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgres://test:test@localhost:5432/test \
+            -e JWT_SECRET=ci-secret-must-be-long-enough-1234567890 \
+            -e REFRESH_TOKEN_PEPPER=ci-pepper-1234567890 \
+            suishouji-server:ci node dist/db/migrate.js
+
+      - name: Start container
+        run: |
+          docker run -d --name api --network host \
+            -e NODE_ENV=production \
+            -e PORT=3000 \
+            -e DATABASE_URL=postgres://test:test@localhost:5432/test \
+            -e JWT_SECRET=ci-secret-must-be-long-enough-1234567890 \
+            -e REFRESH_TOKEN_PEPPER=ci-pepper-1234567890 \
+            -e ALLOW_REGISTER=false \
+            -e INVITE_CODE=let-me-in \
+            -e APP_VERSION=ci \
+            suishouji-server:ci
+
+      - name: Smoke test endpoints
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+
+          echo "--- /healthz ---"
+          curl -sf http://localhost:3000/healthz | tee /dev/stderr | grep -q '"ok":true'
+
+          echo "--- /readyz（应连上数据库）---"
+          curl -sf http://localhost:3000/readyz | tee /dev/stderr | grep -q '"db":"up"'
+
+          echo "--- 注册（校验 native 模块与数据库写入链路）---"
+          curl -sf -X POST http://localhost:3000/api/v1/auth/register \
+            -H 'content-type: application/json' \
+            -d '{"email":"ci@example.com","password":"CiPassword123","inviteCode":"let-me-in"}' \
+            | tee /dev/stderr | grep -q '"accessToken"'
+
+          echo "✅ 镜像冒烟测试通过"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs api | tail -50 || true
