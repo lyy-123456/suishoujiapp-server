@@ -1,0 +1,133 @@
+# 单机部署编排（2C2G 档）：Caddy 自动 HTTPS + NestJS API + PostgreSQL + 每日备份
+#
+# 用法（在 deploy/ 目录）：
+#   cp .env.example .env   # 填域名/密码/密钥
+#   docker compose up -d
+#   docker compose exec api node dist/db/migrate.js   # 或 npm run db:migrate 的容器版
+#
+# 说明：
+# - 只有 caddy 暴露 80/443，postgres 只在内部网络，公网不可达
+# - 各服务都设了 mem_limit，避免某个容器吃光 2G 内存导致内核随机杀 PG
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?请在 .env 里设置 API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    mem_limit: 128m
+    networks:
+      - edge
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/yourname/suishouji-server:latest}
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOST: 0.0.0.0
+      APP_VERSION: ${APP_VERSION:-dev}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    expose:
+      - '3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-suishouji}
+      # 生产环境不要打印敏感信息
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    # 2C2G 档参数（与 docs/backend-technical-plan.md §16.5 一致）
+    command:
+      - postgres
+      - -c
+      - shared_buffers=192MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=30
+      - -c
+      - wal_buffers=8MB
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - log_min_duration_statement=1000
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-suishouji}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 768m
+    shm_size: 256m
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: ['/bin/sh', '/backup.sh']
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGUSER: ${POSTGRES_USER:?}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      PGDATABASE: ${POSTGRES_DB:-suishouji}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      # 可选：装 restic 做加密异地备份（见 backup.sh 注释）
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 256m
+    networks:
+      - internal
+
+networks:
+  edge: {}
+  # 内部网络无外网出口：PG/备份容器不需要联网
+  internal:
+    internal: true
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  backups:

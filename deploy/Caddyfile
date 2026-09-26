@@ -1,0 +1,39 @@
+# Caddy：自动申请/续期 Let's Encrypt 证书，并统一加安全响应头
+# 域名来自 docker-compose 的 API_DOMAIN（环境变量替换）
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "geolocation=(self), camera=(), microphone=()"
+		-Server
+	}
+
+	# 健康检查不打日志，避免噪声
+	@health path /healthz /readyz
+	reverse_proxy @health api:3000
+
+	reverse_proxy api:3000
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# 可选：管理端单独域名（不与用户端共享 Cookie 域）
+# {$ADMIN_DOMAIN} {
+# 	root * /srv/admin
+# 	file_server
+# 	header {
+# 		Content-Security-Policy "default-src 'self'; frame-ancestors 'none'"
+# 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# 	}
+# 	reverse_proxy /api/* api:3000
+# }
