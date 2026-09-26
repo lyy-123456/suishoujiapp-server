@@ -1,12 +1,14 @@
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { AllExceptionsFilter } from '../src/common/all-exceptions.filter';
 import { ResponseInterceptor } from '../src/common/response.interceptor';
 import { resetEnvCache } from '../src/config/env';
 import { DB, PG_POOL } from '../src/db/database.module';
-import { createTestDb, setTestEnv, type TestDb } from './pg-mem';
+import { auditLog } from '../src/db/schema';
+import { createTestDb, setTestEnv, type TestDb } from './test-db';
 
 let app: NestFastifyApplication;
 let testDb: TestDb;
@@ -184,11 +186,12 @@ describe('认证模块（端到端，跑在 pg-mem 上的真实迁移）', () =>
     const meAfter = await call('GET', '/api/v1/auth/me', { token: primary.accessToken });
     expect(meAfter.status).toBe(401);
 
-    // 审计里应当留下复用记录
+    // 审计里应当留下复用记录（用 drizzle 查，pg-mem 与真实 PG 两种模式都能跑）
     await flush();
-    const audits = testDb.mem.public.many(
-      `select action from audit_log where action = 'auth.refresh_reuse'`,
-    );
+    const audits = await testDb.db
+      .select({ action: auditLog.action })
+      .from(auditLog)
+      .where(eq(auditLog.action, 'auth.refresh_reuse'));
     expect(audits.length).toBe(1);
   });
 
@@ -278,9 +281,10 @@ describe('认证模块（端到端，跑在 pg-mem 上的真实迁移）', () =>
 
   it('登录失败会写审计（不含明文密码）', async () => {
     await flush();
-    const logs = testDb.mem.public.many(
-      `select action, detail from audit_log where action = 'auth.login_failed'`,
-    );
+    const logs = await testDb.db
+      .select({ action: auditLog.action, detail: auditLog.detail })
+      .from(auditLog)
+      .where(eq(auditLog.action, 'auth.login_failed'));
     expect(logs.length).toBeGreaterThan(0);
     expect(JSON.stringify(logs)).not.toContain('WrongPassword123');
   });

@@ -84,14 +84,21 @@ CI 会校验"schema 改了但迁移没提交"的情况。
 
 ```bash
 npm test        # 端到端，跑在 pg-mem（内存版 Postgres）上，不需要 Docker/数据库
+
+# 同一套用例跑在真实 PostgreSQL 上（CI 里就是这么跑的）
+TEST_DATABASE_URL=postgres://user:pass@localhost:5432/test npm test
 ```
 
 测试直接应用**真实的迁移 SQL** 并用真实的 drizzle 查询跑通 HTTP 层（Fastify `inject`），
 覆盖：邀请码注册、弱密码、重复邮箱、登录失败锁定、令牌校验、刷新令牌轮换与复用检测、
 改密后旧令牌失效、会话列表、登出、审计落库。
 
-> `test/pg-mem.ts` 里有两处必要的补丁（剥掉 drizzle 传的 `types`/`rowMode` 并按列序把对象行转数组），
-> 原因写在注释里 —— 没有它们 drizzle 在 pg-mem 上完全跑不起来。
+CI 有两个 job：`verify`（pg-mem，秒级）+ `verify-real-postgres`（Postgres 16 service 容器，同一套用例）——
+仿真与真库都会验证，避免"只在 pg-mem 上过"的假安全感。
+
+> `test/test-db.ts` 里有两处必要的补丁（剥掉 drizzle 传的 `types`/`rowMode` 并按列序把对象行转数组），
+> 原因写在注释里 —— 没有它们 drizzle 在 pg-mem 上完全跑不起来。另外 vitest 用 swc 而非 esbuild，
+> 因为 Nest 的依赖注入依赖 `emitDecoratorMetadata`。
 
 ---
 
